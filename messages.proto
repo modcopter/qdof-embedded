@@ -1,0 +1,10 @@
+message Heartbeat {
+	required uint64 system_time = 1;
+}
+
+message Attitude {
+	required float roll = 1;
+	required float pitch = 2;
+	required float yaw = 3;
+	required float throttle = 4;
+}

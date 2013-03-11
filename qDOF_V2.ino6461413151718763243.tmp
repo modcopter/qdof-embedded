@@ -1,0 +1,130 @@
+/*
+ * qDOF Hauptquelldatei. Sollte eigentlich nicht mehr als die Arduino eigenen setup und loop Funktionen enthalten,
+ * alles andere in den entsprechenden Dateien.
+ *
+ * BY-NC-SA 2012
+ */
+
+/*
+ * ---------- Header-Includes ---------
+ */
+
+// Wichtig fürs System oder Arduino-Libraries
+#include <I2C.h>							// I²C-Treiber
+#include <TimerOne.h>						// sollte klar sein...
+
+#include <messages.pb.h>
+#include <pb.h>
+#include <pb_decode.h>
+#include <pb_encode.h>
+
+
+// eigene Header
+#include "pid.h"							// PID-Code
+#include "MPU6050.h"						// MPU6050 Treiber
+#include "qMotorArray.h"					// Motor-Klasse
+
+/*
+ * ---------- Ende der Includes ---------
+ */
+
+#define YAW     2
+#define ROLL    1
+#define PITCH   0
+
+#define E_INVALID_PACKET    1
+#define E_INSUFFICIENT_LEN  2
+#define E_OK                0
+
+unsigned long attitudeTimer = 0;
+
+SPid ratePID[3];
+SPid anglePID[2];
+
+qMotorArray motors;
+MPU6050 mpu;
+envMess_t envMess;
+
+void setup() {
+	initHardware();
+	initPIDs();
+	//
+	attitudeTimer = millis();
+	//
+	motors.startupTest();
+}
+
+void loop() {
+	if ((millis() - attitudeTimer) > 100) {
+
+		attitudeTimer = millis();
+	}
+	//
+	float motRoll = 0;
+	float motPitch = 0;
+	float motYaw = 0;
+
+	if (motors.getSchub() < 10) {
+		motors.stop();
+		return;								// Begrenzung des Schubs
+	}
+	//
+	mpu.readAll(envMess);
+	//
+	if ((abs(envMess.gx) > 500) || (abs(envMess.gy) > 500)) {
+		motors.stop();
+		return;
+	}
+	//
+	motors.restart();
+	//
+	UpdatePID(&anglePID[PITCH], envMess.pitch);
+	ratePID[PITCH].setpoint = anglePID[PITCH].output;
+	UpdatePID(&ratePID[PITCH], envMess.gx);
+
+	UpdatePID(&anglePID[ROLL], envMess.roll);
+	ratePID[ROLL].setpoint = anglePID[ROLL].output;
+	UpdatePID(&ratePID[ROLL], envMess.gy);
+
+	UpdatePID(&ratePID[YAW], envMess.yaw);
+
+	motRoll = ratePID[ROLL].output;
+	motPitch = ratePID[PITCH].output;
+	motYaw = ratePID[YAW].output;
+	//
+	motors.setAttitude(motRoll, motPitch, motYaw);
+}
+
+void serialEvent() {
+  if(Serial.available()) {
+    int packet_size = Serial.read();
+
+    uint8_t in_buffer[256];
+    int bytes_read = Serial.readBytes((char*)in_buffer, packet_size);
+    if (bytes_read != packet_size) {
+      Serial.print(bytes_read);
+      Serial.print("!=");
+      Serial.println(packet_size);
+      //
+      return;
+    }
+
+    pb_istream_t istream = pb_istream_from_buffer(in_buffer, bytes_read);
+    Attitude ping_msg;
+    if(!pb_decode(&istream, Attitude_fields, &ping_msg)) {
+      Serial.println("Invalid!");
+      return;
+    }
+  }
+}
+
+void eblink(int error) {
+  analogWrite(13, 255 / error);
+  delay(500);
+  for (int i = 0; i < error; i++) {
+    digitalWrite(13, HIGH);
+    delay(100);
+    digitalWrite(13, LOW);
+    delay(100);
+  }
+}
